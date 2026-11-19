@@ -10,6 +10,7 @@
 #include "ir.h"
 #include "gps.h"
 #include "nrf24.h"
+#include "subghz.h"
 #include "rfid.h"
 #include "shared.h"
 #include "utils.h"
@@ -24,9 +25,9 @@ void setBrightness(uint8_t value) {
 
 bool feature_exit_requested = false;
 
-// 主菜单：nRF24（2.4GHz Scanner / Proto Kill）已按用户的模块接线恢复；
-// SubGHz(CC1101) 仍然移除。
-const int NUM_MENU_ITEMS = 7;
+// 主菜单：nRF24（2.4GHz Scanner / Proto Kill）与 CC1101（SubGHz Replay/Jammer/Profiles）
+// 都已按用户模块接线恢复。
+const int NUM_MENU_ITEMS = 8;
 const char *menu_items[NUM_MENU_ITEMS] = {
     "WiFi",
     "More",
@@ -34,7 +35,8 @@ const char *menu_items[NUM_MENU_ITEMS] = {
     "Bluetooth",
     "Tools",
     "About",
-    "2.4GHz"};
+    "2.4GHz",
+    "SubGHz"};
 
 const unsigned char *bitmap_icons[NUM_MENU_ITEMS] = {
     bitmap_icon_wifi,
@@ -43,13 +45,15 @@ const unsigned char *bitmap_icons[NUM_MENU_ITEMS] = {
     bitmap_icon_spoofer,
     bitmap_icon_stat,
     bitmap_icon_question,
-    bitmap_icon_jammer};
+    bitmap_icon_jammer,
+    bitmap_icon_analyzer};
 
 // 菜单索引（改动菜单顺序时同步修改这几处）
 static constexpr int MAIN_MENU_OTHER_IDX    = 1;
 static constexpr int MAIN_MENU_SETTINGS_IDX = 2;
 static constexpr int MAIN_MENU_ABOUT_IDX    = 5;
 static constexpr int MAIN_MENU_NRF_IDX      = 6;
+static constexpr int MAIN_MENU_SUBGHZ_IDX   = 7;
 
 // 2.4GHz 子菜单：结构与原 ESP32-DIV 一致（Scanner / Proto Kill / Back）
 static constexpr int NRF_IDX_SCANNER   = 0;
@@ -59,6 +63,18 @@ const int nrf_NUM_SUBMENU_ITEMS = 3;
 const char *nrf_submenu_items[nrf_NUM_SUBMENU_ITEMS] = {
     "Scanner",
     "Proto Kill",
+    "Back to Main Menu"};
+
+// SubGHz 子菜单：同样照搬原项目的四项
+static constexpr int SUBGHZ_IDX_REPLAY  = 0;
+static constexpr int SUBGHZ_IDX_JAMMER  = 1;
+static constexpr int SUBGHZ_IDX_PROFILE = 2;
+static constexpr int SUBGHZ_IDX_BACK    = 3;
+const int subghz_NUM_SUBMENU_ITEMS = 4;
+const char *subghz_submenu_items[subghz_NUM_SUBMENU_ITEMS] = {
+    "Replay Attack",
+    "SubGHz Jammer",
+    "Saved Profile",
     "Back to Main Menu"};
 
 int current_menu_index = 0;
@@ -184,6 +200,13 @@ const unsigned char *nrf_submenu_icons[nrf_NUM_SUBMENU_ITEMS] = {
     bitmap_icon_go_back
 };
 
+const unsigned char *subghz_submenu_icons[subghz_NUM_SUBMENU_ITEMS] = {
+    bitmap_icon_antenna,
+    bitmap_icon_no_signal,
+    bitmap_icon_list,
+    bitmap_icon_go_back
+};
+
 const unsigned char *other_submenu_icons[other_NUM_SUBMENU_ITEMS] = {
     bitmap_icon_led,
     bitmap_icon_rfid_chip,
@@ -282,6 +305,11 @@ void updateActiveSubmenu() {
             active_submenu_items = nrf_submenu_items;
             active_submenu_size = nrf_NUM_SUBMENU_ITEMS;
             active_submenu_icons = nrf_submenu_icons;
+            break;
+        case MAIN_MENU_SUBGHZ_IDX:
+            active_submenu_items = subghz_submenu_items;
+            active_submenu_size = subghz_NUM_SUBMENU_ITEMS;
+            active_submenu_icons = subghz_submenu_icons;
             break;
 
         default:
@@ -1849,6 +1877,135 @@ void handleNrfSubmenuButtons() {
     }
 }
 
+/*──────────────── SubGHz (CC1101) 子菜单 ────────────────*/
+static void subghzReturnToSubmenu() {
+    in_sub_menu = true;
+    is_main_menu = false;
+    submenu_initialized = false;
+    feature_active = false;
+    feature_exit_requested = false;
+    setTouchButtonInputEnabled(false);
+    setTouchNavLabels(nullptr, nullptr, nullptr, nullptr, nullptr);
+    resetTouchNavHeldState();
+    displaySubmenu();
+    delay(200);
+    while (isButtonPressed(BTN_SELECT)) {
+    }
+}
+
+static void runSubGhzFeature(int idx) {
+    current_submenu_index = idx;
+    in_sub_menu = true;
+    feature_active = true;
+    feature_exit_requested = false;
+    setTouchButtonInputEnabled(true);
+
+    if (idx == SUBGHZ_IDX_REPLAY) {
+        replayat::ReplayAttackSetup();
+        while (current_submenu_index == idx && !feature_exit_requested) {
+            current_submenu_index = idx;
+            in_sub_menu = true;
+            replayat::ReplayAttackLoop();
+            if (feature_exit_requested) {
+                break;
+            }
+        }
+    } else if (idx == SUBGHZ_IDX_JAMMER) {
+        subjammer::subjammerSetup();
+        while (current_submenu_index == idx && !feature_exit_requested) {
+            current_submenu_index = idx;
+            in_sub_menu = true;
+            subjammer::subjammerLoop();
+            if (feature_exit_requested) {
+                break;
+            }
+        }
+    } else if (idx == SUBGHZ_IDX_PROFILE) {
+        SavedProfile::saveSetup();
+        while (current_submenu_index == idx && !feature_exit_requested) {
+            current_submenu_index = idx;
+            in_sub_menu = true;
+            SavedProfile::saveLoop();
+            if (feature_exit_requested) {
+                break;
+            }
+        }
+    }
+
+    subghzReturnToSubmenu();
+}
+
+void handleSubGHzSubmenuButtons() {
+    if (isButtonPressed(BTN_UP)) {
+        current_submenu_index =
+            (current_submenu_index - 1 + active_submenu_size) % active_submenu_size;
+        last_interaction_time = millis();
+        displaySubmenu();
+        delay(200);
+    }
+
+    if (isButtonPressed(BTN_DOWN)) {
+        current_submenu_index = (current_submenu_index + 1) % active_submenu_size;
+        last_interaction_time = millis();
+        displaySubmenu();
+        delay(200);
+    }
+
+    if (isButtonPressed(BTN_SELECT)) {
+        last_interaction_time = millis();
+        delay(200);
+
+        if (current_submenu_index == SUBGHZ_IDX_BACK) {
+            in_sub_menu = false;
+            feature_active = false;
+            feature_exit_requested = false;
+            displayMenu();
+            handleButtons();
+            is_main_menu = false;
+            return;
+        }
+
+        runSubGhzFeature(current_submenu_index);
+        return;
+    }
+
+    if (!feature_active) {
+        int x, y;
+        if (!readTouchXY(x, y)) {
+            return;
+        }
+
+        for (int i = 0; i < active_submenu_size; i++) {
+            int yPos = 30 + i * 30;
+            if (i == active_submenu_size - 1) yPos += 10;
+
+            int button_x1 = 10;
+            int button_y1 = yPos;
+            int button_x2 = 110;
+            int button_y2 = yPos + (i == active_submenu_size - 1 ? 40 : 30);
+
+            if (x >= button_x1 && x <= button_x2 && y >= button_y1 && y <= button_y2) {
+                current_submenu_index = i;
+                last_interaction_time = millis();
+                displaySubmenu();
+                delay(120);
+
+                if (current_submenu_index == SUBGHZ_IDX_BACK) {
+                    in_sub_menu = false;
+                    feature_active = false;
+                    feature_exit_requested = false;
+                    displayMenu();
+                    handleButtons();
+                    is_main_menu = false;
+                } else {
+                    runSubGhzFeature(current_submenu_index);
+                }
+                break;
+            }
+        }
+    }
+}
+
 static void otherDismissPlaceholder() {
     delay(25);
     while (isButtonPressed(BTN_SELECT) || isButtonPressed(BTN_LEFT)) {
@@ -2582,6 +2739,7 @@ void handleButtons() {
             case 3: handleBluetoothSubmenuButtons(); break;
             case 4: handleToolsSubmenuButtons(); break;
             case MAIN_MENU_NRF_IDX: handleNrfSubmenuButtons(); break;
+            case MAIN_MENU_SUBGHZ_IDX: handleSubGHzSubmenuButtons(); break;
             default: break;
         }
     } else {
@@ -2678,21 +2836,26 @@ void handleButtons() {
 void setup() {
 
   Serial.begin(115200);
-  Serial.println("[boot] start");
+  // 复位原因：1=上电 3=软件 4=panic 5=INT_WDT 6=TASK_WDT 7=WDT 9=欠压
+  Serial.printf("[boot] start reset=%d\n", (int)esp_reset_reason());
 
+  Serial.println("[boot] tft.init");
   // tft.init() 必须先跑：它内部会调用 SPI.begin(TFT_SCLK, TFT_MISO, TFT_MOSI, -1)
   // 把 TFT/SD 共用的这条总线按本板引脚启动起来。之后 initSDCard() 再调
   // SPI.begin(...) 会因为总线已启动而直接返回，SD 只是换 CS（4）。
   // 顺序反过来会让 SD 抢先占用总线，TFT 引脚就永远配不上了。
   tft.init();
   tft.setRotation(TFT_ROTATION);
+  Serial.println("[boot] tft ok");
 
   ledcSetup(PWM_CHANNEL, PWM_FREQ, PWM_RESOLUTION);
   ledcAttachPin(BACKLIGHT_PIN, PWM_CHANNEL);
   setBrightness(100);
 
   // FT6336 走 I2C，独立于上面那条 SPI 总线；触摸要早于任何界面交互初始化。
+  Serial.println("[boot] touch");
   setupTouchscreen();
+  Serial.println("[boot] touch ok");
 
   applyThemeToPalette(settings().theme);
 
@@ -2702,13 +2865,19 @@ void setup() {
 
   tft.fillScreen(TFT_BLACK);
 
+  Serial.println("[boot] logo");
   displayLogo(TFT_WHITE, 500);
+  Serial.println("[boot] logo ok");
 
+  Serial.println("[boot] sd");
   initSDCard();
+  Serial.println("[boot] sd ok");
 
+  Serial.println("[boot] settings");
   settingsLoad();
   applyThemeToPalette(settings().theme);
   setBrightness(settings().brightness);
+  Serial.println("[boot] settings ok");
 
 #if HAS_PCF8574_BUTTONS
   if (!initPcf8574Buttons()) {

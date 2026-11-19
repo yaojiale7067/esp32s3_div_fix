@@ -1,7 +1,7 @@
 #pragma once
 // config.h — merged common header for the PlatformIO ESP32-DIV port.
-// 只保留 WiFi / BLE / IR / RFID / GPS / SD / TFT / 触摸会用到的 include 与命名空间声明。
-// 已删除: NRF24 (RF24)、Sub-GHz (CC1101/RCSwitch)、PCF8574 物理按钮、XPT2046。
+// WiFi / BLE / IR / RFID / GPS / nRF24 / CC1101 / SD / TFT / 触摸 的公共 include 与声明。
+// 已删除: PCF8574 物理按钮驱动、XPT2046 电阻触摸、Buzzer、StatusLed。
 
 #include <Arduino.h>
 #include <TFT_eSPI.h>
@@ -20,6 +20,10 @@
 #include <esp_system.h>
 #include <esp_event.h>
 #include <nvs_flash.h>
+
+// Sub-GHz：CC1101 驱动 + RCSwitch 的 OOK 编解码。
+#include <ELECHOUSE_CC1101_SRC_DRV.h>
+#include <RCSwitch.h>
 
 // NimBLE BLE stack, via the BleCompat shim which exposes BLEDevice/BLEScan/... aliases.
 #include "BleCompat.h"

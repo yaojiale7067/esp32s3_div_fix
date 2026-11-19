@@ -214,6 +214,39 @@ static const uint8_t OBF_WB[]   = {75, 97, 110, 109, 122, 92, 109, 107, 96, 38, 
 #define NRF24_MOSI 18
 #endif
 
+/*──────────────── CC1101 (Sub-GHz) ────────────────
+ * CC1101 与 nRF24 共用同一条 SPI3 总线的 SCK/MISO/MOSI，只有 CSN 各自独立：
+ *   VCC  3V3   模块只能 1.8~3.6V，接 5V 会烧
+ *   GND  GND
+ *   SCK  16  ┐
+ *   MISO 17  ├ 与 nRF24 共用
+ *   MOSI 18  ┘
+ *   CSN  5   独立片选
+ *   GDO0 6   RCSwitch 软解码用；悬空时扫描/载波照样能跑
+ *   GDO2 不接 */
+#define RADIO_SPI_SCK  NRF24_SCK
+#define RADIO_SPI_MISO NRF24_MISO
+#define RADIO_SPI_MOSI NRF24_MOSI
+
+#ifndef CC1101_CSN
+#define CC1101_CSN  5
+#endif
+#ifndef CC1101_GDO0
+#define CC1101_GDO0 6
+#endif
+#ifndef CC1101_GDO2
+#define CC1101_GDO2 -1
+#endif
+
+/* RCSwitch 软件 OOK 用同一个 GDO0：接收时当输入解调，发送时当输出调制，
+ * 两者互斥切换。GDO 悬空也不影响 RSSI 扫描与定频载波（那两条纯 SPI）。 */
+#ifndef SUBGHZ_RX_PIN
+#define SUBGHZ_RX_PIN CC1101_GDO0
+#endif
+#ifndef SUBGHZ_TX_PIN
+#define SUBGHZ_TX_PIN CC1101_GDO0
+#endif
+
 /* PN532 RFID/NFC —— 本板未接该模块，而且这些脚都在禁用表里，
  * 因此全部置 -1（未连接）。RfidNfc::begin() 检测到引脚为负会直接
  * 返回不可用，连 SPI3 都不初始化。

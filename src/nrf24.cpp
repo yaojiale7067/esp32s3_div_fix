@@ -3,6 +3,7 @@
 #include <TFT_eSPI.h>
 
 #include "nrf24.h"
+#include "radio_bus.h"
 #include "shared.h"
 #include "utils.h"
 
@@ -32,39 +33,36 @@ constexpr uint8_t BIT_CONT_WAVE = 0x80;
 constexpr uint8_t BIT_PLL_LOCK  = 0x10;
 constexpr uint8_t RF_PWR_0DBM   = 0x06;
 
-/* SPI3(HSPI) 独立主机：TFT/SD 在 SPI2 上，两者不共享事务锁。 */
-SPIClass s_spi(HSPI);
-bool s_busStarted = false;
 bool s_present = false;
 
 inline void csnLow() { digitalWrite(NRF24_CSN, LOW); }
 inline void csnHigh() { digitalWrite(NRF24_CSN, HIGH); }
 
 void busWrite(uint8_t reg, uint8_t value) {
-  s_spi.beginTransaction(SPISettings(8000000, MSBFIRST, SPI_MODE0));
+  radioBus().beginTransaction(SPISettings(8000000, MSBFIRST, SPI_MODE0));
   csnLow();
-  s_spi.transfer((uint8_t)(CMD_W_REGISTER | (reg & 0x1F)));
-  s_spi.transfer(value);
+  radioBus().transfer((uint8_t)(CMD_W_REGISTER | (reg & 0x1F)));
+  radioBus().transfer(value);
   csnHigh();
-  s_spi.endTransaction();
+  radioBus().endTransaction();
 }
 
 uint8_t busRead(uint8_t reg) {
-  s_spi.beginTransaction(SPISettings(8000000, MSBFIRST, SPI_MODE0));
+  radioBus().beginTransaction(SPISettings(8000000, MSBFIRST, SPI_MODE0));
   csnLow();
-  s_spi.transfer((uint8_t)(CMD_R_REGISTER | (reg & 0x1F)));
-  const uint8_t v = s_spi.transfer(CMD_NOP);
+  radioBus().transfer((uint8_t)(CMD_R_REGISTER | (reg & 0x1F)));
+  const uint8_t v = radioBus().transfer(CMD_NOP);
   csnHigh();
-  s_spi.endTransaction();
+  radioBus().endTransaction();
   return v;
 }
 
 void busCommand(uint8_t cmd) {
-  s_spi.beginTransaction(SPISettings(8000000, MSBFIRST, SPI_MODE0));
+  radioBus().beginTransaction(SPISettings(8000000, MSBFIRST, SPI_MODE0));
   csnLow();
-  s_spi.transfer(cmd);
+  radioBus().transfer(cmd);
   csnHigh();
-  s_spi.endTransaction();
+  radioBus().endTransaction();
 }
 
 /** 关掉连续载波并进入掉电，退出功能时一定要调。 */
@@ -98,9 +96,8 @@ void radioCarrier(uint8_t channel) {
 }
 
 /* 状态栏：功能界面里 500ms 刷一次就够，别把扫描节奏拖慢。 */
-uint32_t s_lastStatusMs = 0;
-
 void refreshStatusBar(bool force) {
+  static uint32_t s_lastStatusMs = 0;
   const uint32_t now = millis();
   if (!force && (now - s_lastStatusMs) < 500) {
     return;
@@ -123,21 +120,17 @@ void drawTitle(const char* title) {
 namespace Nrf24Radio {
 
 bool begin() {
-  if (!s_busStarted) {
-    // 首次调用决定引脚映射；之后再调 begin() 不会重定向。
-    s_spi.begin(NRF24_SCK, NRF24_MISO, NRF24_MOSI, -1);
-    pinMode(NRF24_CSN, OUTPUT);
-    csnHigh();
-    pinMode(NRF24_CE, OUTPUT);
-    digitalWrite(NRF24_CE, LOW);
-    s_busStarted = true;
-    delay(60);
-  }
+  // 总线由 radio_bus 统一启动，CC1101 与 nRF24 共用同一组 SCK/MISO/MOSI。
+  radioBusEnsureStarted();
+  pinMode(NRF24_CSN, OUTPUT);
+  csnHigh();
+  pinMode(NRF24_CE, OUTPUT);
+  digitalWrite(NRF24_CE, LOW);
+  delay(30);
 
   // 探测：SETUP_AW 只有低两位有效，写 0x03 能读回 0x03 才算在线。
   busWrite(REG_SETUP_AW, 0x03);
   const uint8_t aw = busRead(REG_SETUP_AW);
-  // 再确认一次：CONFIG 写 PWR_UP 后能读到 PWR_UP（部分克隆片会回 0x08）。
   busWrite(REG_CONFIG, BIT_PWR_UP);
   delay(2);
   const uint8_t cfg = busRead(REG_CONFIG);
@@ -153,9 +146,7 @@ bool begin() {
 
 bool isPresent() { return s_present; }
 
-void release() {
-  radioIdle();
-}
+void release() { radioIdle(); }
 
 }  // namespace Nrf24Radio
 
@@ -172,7 +163,6 @@ constexpr int kX0 = 25;   // (240 - 63*3) / 2
 uint8_t s_activity[kChannels];
 uint8_t s_drawn[kChannels];
 uint16_t s_sweeps = 0;
-uint32_t s_lastStatusMs = 0;
 
 uint16_t barColor(int h) {
   if (h >= 40) return RED;
@@ -229,14 +219,6 @@ void redrawBars() {
   }
 }
 
-void drawHeader() {
-  tft.fillRect(0, 2, 240, 16, TFT_BLACK);
-  drawTitle("2.4GHz Scanner");
-  tft.setTextFont(2);
-  tft.setTextColor(UI_DIM_TEXT, TFT_BLACK);
-  tft.drawRightString("0-125", 232, 4, 2);
-}
-
 void drawFooterInfo() {
   tft.fillRect(0, 214, 240, 16, TFT_BLACK);
   tft.setTextFont(2);
@@ -265,7 +247,6 @@ void setup() {
     tft.setTextColor(UI_DIM_TEXT, TFT_BLACK);
     tft.drawString("CE14 CSN15 SCK16", 8, 80);
     tft.drawString("MOSI18 MISO17", 8, 98);
-    setTouchNavLabels(nullptr, nullptr, "Exit", nullptr, nullptr);
     redrawTouchButtonBar();
     return;
   }
@@ -344,7 +325,6 @@ bool s_running = false;
 uint8_t s_curCh = 0;
 uint32_t s_lastHopMs = 0;
 uint32_t s_hops = 0;
-uint32_t s_lastStatusMs = 0;
 
 void drawList() {
   for (int i = 0; i < T_COUNT; ++i) {
@@ -355,8 +335,10 @@ void drawList() {
     tft.setTextSize(1);
     tft.setTextColor(sel ? TFT_WHITE : UI_TEXT, sel ? UI_ACCENT : TFT_BLACK);
     tft.drawString(kNames[i], 12, y + 2);
-    tft.setTextColor(sel ? TFT_WHITE : UI_DIM_TEXT, sel ? UI_ACCENT : TFT_BLACK);
-    tft.drawRightString(s_running && sel ? "ON" : "", 228, y + 2, 2);
+    if (s_running && sel) {
+      tft.setTextColor(TFT_WHITE, UI_ACCENT);
+      tft.drawRightString("ON", 228, y + 2, 2);
+    }
   }
 }
 
