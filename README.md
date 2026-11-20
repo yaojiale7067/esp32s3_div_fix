@@ -1,6 +1,6 @@
 # ESP32-DIV（PlatformIO 移植版）
 
-把 [ESP32-DIV](https://github.com/DeaDHackS/ESP32-DIV) 那套「多协议无线工具箱」移植到 PlatformIO + Arduino 框架，并按本板硬件重写了引脚、显示、触摸和两条射频总线。
+把 [ESP32-DIV](https://github.com/cifertech/ESP32-DIV) 移植到 PlatformIO + Arduino 框架，并按本板硬件重写了引脚、显示、触摸和两条射频总线。
 
 原工程是 Arduino IDE 的 `.ino` 草图，依赖 PCF8574 物理按键、蜂鸣器、WS2812 状态灯和 XPT2046 电阻触摸。本板这些都没有，所以 UI 交互改成了**纯触摸导航条**，外接模块改成**按需接、缺了就在界面上直接报不可用**，不再因为少一个模块就启动不了。
 
