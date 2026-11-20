@@ -1,3 +1,4 @@
+[English](README_US.md) | [简体中文](README.md)
 # ESP32-DIV（PlatformIO 移植版）
 
 把 [ESP32-DIV](https://github.com/cifertech/ESP32-DIV) 移植到 PlatformIO + Arduino 框架，并按本板硬件重写了引脚、显示、触摸和两条射频总线。
